@@ -628,8 +628,13 @@ class DB4DStatement {
 		if($length==pow(256, 4)) {
 			return "";
 		}
-		$s = mb_convert_encoding(socket_read($this->connectionResource, 2*$length), 'UTF-8', 'UTF-16LE');
-		return $s;
+		$s = socket_read($this->connectionResource, 2*$length);
+		$lens = strlen($s) / 2;
+		while ($lens < $length) {
+			$s .= socket_read($this->connectionResource, 2*($length - $lens));
+			$lens = strlen($s) / 2;
+		}
+		return mb_convert_encoding($s, 'UTF-8', 'UTF-16LE');
 	}
 	
 	/**
