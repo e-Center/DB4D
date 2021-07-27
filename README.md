@@ -8,6 +8,31 @@ fetching rows results in a SEGFAULT while calling memcpy, this alternative imple
 completely in PHP.
 
 It has been tested against 4D Database v11-v13 in ASCII mode (fairly legacy systems).
+# Install for Symfony projects :
+To install this library as symfony dependancy you need to add it in repositories section of your composer.json :
+    <pre><code>"repositories": [
+    {
+      "type": "package",
+      "package": {
+        "name": "e-center/db4d",
+        "version": "master",
+        "source": {
+          "url": "git@github.com:e-Center/DB4D.git",
+          "type": "git",
+          "reference": "master"
+        }
+      }
+    }
+  ]
+  </code></pre>
+
+To handle autoloading of the library, you have to add the following line to your autoload section under psr-4 parameters of your composer.json :
+<pre><code>"autoload": {
+    "psr-4": {
+      "DB4D\\": "vendor/e-center/db4d/src/DB4D"
+    }
+  },
+  </code></pre>
 
 # Usage
 Connecting to your database system by creating a new DB4DDriver object:
