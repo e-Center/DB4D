@@ -28,18 +28,18 @@ use Exception;
  * @package DB4D
  */
 class DB4DException extends Exception {
-	const SOC_CREATION_ERROR = 0x00;
-	const SOC_CONNECTION_ERROR = 0x01;
-	const STMT_RETURN_ERROR = 0x02;
-	const TYPE_NOT_SUPPORTED = 0x03;
-	const STMT_UNMATCHING_ARGS = 0x04;
+	public const SOC_CREATION_ERROR = 0x00;
+	public const SOC_CONNECTION_ERROR = 0x01;
+	public const STMT_RETURN_ERROR = 0x02;
+	public const TYPE_NOT_SUPPORTED = 0x03;
+	public const STMT_UNMATCHING_ARGS = 0x04;
 	
 	/**
 	 * Construct a new exception.
 	 * @param String $message The error message.
 	 * @param int $code The error code.
 	 */
-	public function __construct($message, $code) {
+	public function __construct(string $message = "", int $code = 0) {
 		parent::__construct($message, $code);
 	}
 	
