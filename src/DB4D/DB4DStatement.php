@@ -172,7 +172,7 @@ class DB4DStatement
     public function __construct(&$dbConnection, $preparedQuery = null, $commandID = 3)
     {
         $this->connectionResource = $dbConnection;
-        $this->preparedQuery = $preparedQuery;
+        $this->preparedQuery = preg_replace('\r|\n', ' ', $preparedQuery);
         $this->commandID = $commandID;
     }
 
@@ -235,7 +235,9 @@ class DB4DStatement
         } else {
             $in = $this->preparedQuery;
             if ($args !== null) {
-                array_walk($args, 'UhuniBundle\External\DB4D\DB4DStatement::parseArguments');
+                foreach($args as $karg=>$arg) {
+                    $this->parseArguments($args[$karg]);
+                }
                 $in = preg_replace(array_fill(0, count($args), "/\?/"), $args, $this->preparedQuery, 1);
                 $in = str_replace(":QUOT:", "?", $in);
             }
@@ -452,7 +454,9 @@ class DB4DStatement
         } else {
             $in = $this->preparedQuery;
             if ($parameters !== null) {
-                array_walk($parameters, 'UhuniBundle\External\DB4D\DB4DStatement::parseArguments');
+                foreach($parameters as $karg=>$arg) {
+                    $this->parseArguments($parameters[$karg]);
+                }
                 $in = preg_replace(array_fill(0, count($parameters), "/\?/"), $parameters, $this->preparedQuery, 1);
                 $in = str_replace(":QUOT:", "?", $in);
             }
