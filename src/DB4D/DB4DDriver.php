@@ -154,7 +154,7 @@ class DB4DDriver {
 	 */
 	public function prepare($query) {
 		$preparedQuery = str_pad($this->commandID, 3, "0", STR_PAD_LEFT)." EXECUTE-STATEMENT\r\nSTATEMENT : ";
-		$preparedQuery .= preg_replace('/\r|\n/', ' ', $query);
+		$preparedQuery .= $query;
 		$preparedQuery .= "\r\nOUTPUT-MODE : RELEASE\r\nFIRST-PAGE-SIZE : 1\r\n\r\n";
 		$this->commandID = $this->commandID+4;
 		return new DB4DStatement($this->connection, $preparedQuery, $this->commandID-4);
@@ -170,7 +170,7 @@ class DB4DDriver {
 	public function query($sql) {
 		$resultSet = new DB4DStatement($this->connection);
 		$in = str_pad($this->commandID, 3, "0", STR_PAD_LEFT)." EXECUTE-STATEMENT\r\nSTATEMENT : ";
-		$in .= preg_replace('/\r|\n/', ' ', $sql);
+		$in .= $sql;
 		$in .= "\r\nOUTPUT-MODE : RELEASE\r\nFIRST-PAGE-SIZE : 1\r\n\r\n";
 		socket_write($this->connection, $in, strlen($in));
 
