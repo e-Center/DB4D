@@ -172,7 +172,7 @@ class DB4DStatement
     public function __construct(&$dbConnection, $preparedQuery = null, $commandID = 3)
     {
         $this->connectionResource = $dbConnection;
-        $this->preparedQuery = preg_replace('/\r|\n/', ' ', $preparedQuery);
+        $this->preparedQuery = $preparedQuery;
         $this->commandID = $commandID;
     }
 
