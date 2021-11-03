@@ -236,7 +236,7 @@ class DB4DStatement
             $in = $this->preparedQuery;
             if ($args !== null) {
                 foreach($args as $karg=>$arg) {
-                    $this->parseArguments($args[$karg]);
+                    self::parseArguments($args[$karg]);
                 }
                 $in = preg_replace(array_fill(0, count($args), "/\?/"), $args, $this->preparedQuery, 1);
                 $in = str_replace(":QUOT:", "?", $in);
