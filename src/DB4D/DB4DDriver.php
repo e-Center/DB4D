@@ -71,7 +71,7 @@ class DB4DDriver {
 		if(!filter_var($host, FILTER_VALIDATE_IP)) {$host = gethostbyname($host);}
 		$result = socket_connect($this->connection, $host, $port);
 		if ($result === false) {
-            socket_close($this->connection);
+            		$this->close();
 			throw new DB4DException(socket_strerror(socket_last_error()), DB4DException::SOC_CONNECTION_ERROR);
 		}
 
@@ -133,6 +133,10 @@ class DB4DDriver {
 	 * Close the connection.
 	 */
 	public function close() {
+		$in = "004 LOGOUT\r\n\r\n";
+		socket_write($this->connection, $in, strlen($in));
+        	$in = "005 QUIT\r\n\r\n";
+		socket_write($this->connection, $in, strlen($in));
 		socket_shutdown($this->connection);
 		socket_close($this->connection);
 	}
