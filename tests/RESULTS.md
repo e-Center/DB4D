@@ -2,9 +2,9 @@
 
 | Exécution | Réussis | Échecs |
 |---|---:|---:|
-| PHP 8.5.10, Mac ARM | 61 | 0 |
-| PHP 8.5.12, Debian 13 ARM64 | 61 | 0 |
-| PHP 8.5.12, Debian 13 x86_64 sous émulation | 61 | 0 |
+| PHP 8.5.10, Mac ARM | 62 | 0 |
+| PHP 8.5.12, Debian 13 ARM64 | 62 | 0 |
+| PHP 8.5.12, Debian 13 x86_64 sous émulation | 62 | 0 |
 
 Commande : `php tests/run.php`. Les conteneurs des deux dernières exécutions avaient un système de fichiers en lecture seule, `/tmp` temporaire et `--network none` ; seul le loopback interne permet les échanges du simulateur. Les avertissements PHP non masqués font échouer les tests.
 

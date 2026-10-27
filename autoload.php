@@ -8,4 +8,4 @@ spl_autoload_register(static function (string $class): void {
             require_once $file;
         }
     }
-});
+}, true, true); // Resolve this namespace before legacy Magento underscore autoloaders.

@@ -101,6 +101,12 @@ foreach ([['ffffffffffffffff', -1], ['0000000000000080', PHP_INT_MIN], ['fffffff
     test('signed64 ' . $hex, static fn() => same(Codec::signed64(hex2bin($hex)), $value));
 }
 test('PDOException-compatible safe errors', static function() { $e = new DB4DException('fixture', '42000', 123); same($e instanceof PDOException, true); same($e->errorInfo, ['42000', 123, 'fixture']); });
+test('autoload precedes legacy Magento-style fallback', static function() {
+    $program = 'spl_autoload_register(static function($name){ throw new RuntimeException("legacy fallback"); }); require ' . var_export(dirname(__DIR__) . '/autoload.php', true) . '; if (!class_exists("DB4D\\\\DB4DDriver")) { exit(1); }';
+    $child = proc_open([PHP_BINARY, '-r', $program], [0 => ['pipe','r'], 1 => ['pipe','w'], 2 => ['pipe','w']], $pipes);
+    fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+    same(proc_close($child), 0); same($out, ''); same($err, '');
+});
 
 test('login zero update binary body and following query', static function() {
     peer([login(), update('UPDATE t SET x=1', 0), selectStep('SELECT x', [[1]], ['VK_LONG'], ['x']), closeStep()], static function($port) {
