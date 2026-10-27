@@ -1,4 +1,5 @@
-.idea
-phpdoc.xml
-doc
-.history
+/vendor/
+/.env
+/secrets/
+/results/
+/.DS_Store

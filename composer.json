@@ -1,0 +1,8 @@
+{
+    "name": "e-center/db4d",
+    "description": "Pure PHP 4D SQL client with an explicit PDO-compatible application API",
+    "type": "library",
+    "require": {"php": "^8.2", "ext-pdo": "*", "ext-mbstring": "*"},
+    "autoload": {"psr-4": {"DB4D\\": "src/DB4D/"}},
+    "scripts": {"test": "@php tests/run.php"}
+}

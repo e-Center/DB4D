@@ -20,34 +20,24 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 namespace DB4D;
-use Exception;
 
-/**
- * Handle runtime errors.
- * This class extends the Exception class for exception handling.
- * @package DB4D
- */
-class DB4DException extends Exception {
-	public const SOC_CREATION_ERROR = 0x00;
-	public const SOC_CONNECTION_ERROR = 0x01;
-	public const STMT_RETURN_ERROR = 0x02;
-	public const TYPE_NOT_SUPPORTED = 0x03;
-	public const STMT_UNMATCHING_ARGS = 0x04;
-	
-	/**
-	 * Construct a new exception.
-	 * @param String $message The error message.
-	 * @param int $code The error code.
-	 */
-	public function __construct(string $message = "", int $code = 0) {
-		parent::__construct($message, $code);
-	}
-	
-	/**
-	 * Create a String representation of this error.
-	 * @return String 
-	 */
-	public function __toString() {
-        return __CLASS__ . ": [{$this->code}]: {$this->message}\n";
+/** Catchable by existing catch (PDOException $e) application code. */
+class DB4DException extends \PDOException
+{
+    public const SOC_CREATION_ERROR = 0;
+    public const SOC_CONNECTION_ERROR = 1;
+    public const STMT_RETURN_ERROR = 2;
+    public const TYPE_NOT_SUPPORTED = 3;
+    public const STMT_UNMATCHING_ARGS = 4;
+
+    public function __construct(string $message = '', string|int $state = 'HY000', int $nativeCode = 0)
+    {
+        if (is_int($state)) {
+            $nativeCode = $state;
+            $state = 'HY000';
+        }
+        parent::__construct($message, $nativeCode);
+        $this->code = $state;
+        $this->errorInfo = [$state, $nativeCode, $message];
     }
 }

@@ -19,796 +19,214 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 namespace DB4D;
 
-use InvalidArgumentException;
+use PDO;
 
-/**
- * Handle query results of a 4th Dimension database.
- * This class reads the response of a previously executet sql query.
- * It provides methods to access the data of a result as well as access metadata of the result.
- * @package DB4D
- */
-class DB4DStatement
+/** Forward-only statement. Rows are paged from the existing server cursor, never re-executed. */
+class DB4DStatement implements \IteratorAggregate
 {
-    /**
-     * The result type of the statement.
-     * Stores the type of the expected statement result. Could be either Update-Count or Fetch-Result.
-     * @access public
-     * @var String
-     */
-    public $resultType;
-    /**
-     * Total count of affected rows.
-     * @access public
-     * @var integer
-     */
-    public $rowCount;
-    /**
-     * Total count of columns.
-     * @access private
-     * @var integer
-     */
-    private $columnCount;
-    /**
-     * The result set's column aliases.
-     * @access private
-     * @var array
-     */
-    private $columnNames;
-    /**
-     * The datatypes of the returned columns.
-     * @access private
-     * @var array
-     */
-    private $columnTypes;
-    /**
-     * The updateability of the returned columns.
-     * @access private
-     * @var array
-     */
-    private $columnUpdateability;
-    /**
-     * The count of the executed command.
-     * @access private
-     * @var integer
-     */
-    private $commandCount;
-    /**
-     * The connection to a 4th Dimension database.
-     * @access private
-     * @var resource
-     */
-    private $connectionResource;
-    /**
-     * A compiled query to be executed with optional arguments.
-     * @access private
-     * @var String
-     */
-    private $preparedQuery;
-    /**
-     * The amount of rows sent as initial response
-     * @access private
-     * @var integer
-     */
-    private $rowCountSent;
-    /**
-     * The result returned by the server.
-     * @access private
-     * @var array
-     */
-    private $row;
-    /**
-     * The id of the statement.
-     * @access private
-     * @var integer
-     */
-    private $statementID;
-    /**
-     * The id of the command.
-     * @access private
-     * @var integer
-     */
-    private $commandID;
-    /**
-     * Is an error occurred?
-     * @access private
-     * @var bool
-     */
-    private $error;
-    /**
-     * The error code of the error.
-     * @access private
-     * @var string
-     */
-    private $errorCode;
-    /**
-     * The error component code of the error.
-     * @access private
-     * @var string
-     */
-    private $errorComponentCode;
-    /**
-     * The error description of the error.
-     * @access private
-     * @var string
-     */
-    private $errorDescription;
+    public string $resultType = '';
+    public int $rowCount = 0;
+    public readonly string $queryString;
+    private ?int $statementID = null;
+    private array $metadata = [];
+    private array $page = [];
+    private int $pageIndex = 0;
+    private int $received = 0;
+    private bool $executed = false;
+    private array $bindings = [];
+    private array $bindingTypes = [];
+    private ?int $fetchMode = null;
+    private array $fetchArgs = [];
+    private array $lastError = ['00000', null, null];
 
-    /**
-     * Preparing the arguments of a query.
-     * @param mixed $value The value to be prepared.
-     */
-    public static function parseArguments(&$value)
+    public function __construct(private DB4DDriver $driver, #[\SensitiveParameter] string $sql) { $this->queryString = $sql; }
+
+    public function execute(#[\SensitiveParameter] ?array $parameters = null): bool
     {
-        if (is_null($value)) {
-            $value = "NULL";
-
-            return;
-        }
-        if (is_string($value)) {
-            $value = str_replace(chr(10), '', str_replace(chr(13), '', $value));
-            $value = str_replace("'", "''", $value);
-            $value = str_replace("?", ":QUOT:", $value);
-            $value = "'{$value}'";
-
-            return;
-        }
-        if (is_bool($value)) {
-            $value = "CAST(".intval($value)." as BOOLEAN)";
-
-            return;
-        }
-    }
-
-    /**
-     * Create a DB4DStatement object.
-     * Ceates a new DB4DStatement object and set it's prepared query.
-     * @param resource $dbConnection An established connection to a 4D server.
-     * @param String $preparedQuery A complete message ready to send out for executing.
-     * @param int $commandID The id for the initial command.
-     */
-    public function __construct(&$dbConnection, $preparedQuery = null, $commandID = 3)
-    {
-        $this->connectionResource = $dbConnection;
-        $this->preparedQuery = $preparedQuery;
-        $this->commandID = $commandID;
-    }
-
-    /**
-     * The magic setter method
-     * Sets the value of a property or throws an exception if the
-     * property does not exist.
-     * @param string $property The name of the property to set
-     * @param string $value The value of the property to set
-     * @throws InvalidArgumentException if the property does not exist
-     */
-    public function __set($property, $value)
-    {
-        if (property_exists($this, $property)) {
-            $this->$property = $value;
-        } else {
-            throw new InvalidArgumentException('This property does not exists.');
-        }
-    }
-
-    /**
-     * The magic getter method
-     * Gets the value of a property or throws an exception if the
-     * property does not exist.
-     * @param string $property The name of the property to get
-     * @return string The value of the property
-     * @throws InvalidArgumentException if the property does not exist
-     */
-    public function __get($property)
-    {
-        if (property_exists($this, $property)) {
-            return $this->$property;
-        } else {
-            throw new InvalidArgumentException('This property does not exists.');
-        }
-    }
-
-    /**
-     * Close the database cursor of the statement.
-     */
-    public function closeCursor()
-    {
-        $in = "009 CLOSE-STATEMENT\r\nSTATEMENT-ID : {$this->statementID}\r\n\r\n";
-        socket_write($this->connectionResource, $in, strlen($in));
-
-        return $this->sRead(9);
-    }
-
-    /**
-     * Execute a query.
-     * Parses the arguments and injects them into the prepared query before executing it.
-     * @param array $args The array with the optional arguments of the query.
-     * @return mixed Boolean success of a SELECT statement. On INSERT, UPDATE and DELETE statements, the number of rows affected.
-     * @throws DB4DException
-     */
-    public function execute($args = null)
-    {
-        if ($args !== null && (!is_array($args) || substr_count($this->preparedQuery, "?") != count($args))) {
-            throw new DB4DException("Count of arguments does not match.", DB4DException::STMT_UNMATCHING_ARGS);
-        } else {
-            $in = $this->preparedQuery;
-            if ($args !== null) {
-                foreach($args as $karg=>$arg) {
-                    self::parseArguments($args[$karg]);
-                }
-                $in = preg_replace(array_fill(0, count($args), "/\?/"), $args, $this->preparedQuery, 1);
-                $in = str_replace(":QUOT:", "?", $in);
+        $this->lastError = ['00000', null, null];
+        try {
+            $sql = $this->getRawSql($parameters);
+            $this->closeCursor();
+            $this->rowCount = 0; $this->metadata = []; $this->resultType = ''; $this->executed = false;
+            $result = $this->driver->executeSql($sql);
+            $this->resultType = $result['type']; $this->rowCount = $result['rowCount'];
+            $this->metadata = $result['metadata']; $this->statementID = $result['id'];
+            $this->page = $result['rows']; $this->pageIndex = 0; $this->received = count($this->page);
+            if ($this->received < $this->rowCount && $this->resultType !== 'Update-Count' && $this->statementID === null) {
+                $this->driver->close();
+                throw new DB4DException('4D omitted the cursor identifier for a paged result.', '08S01');
             }
-            socket_write($this->connectionResource, $in, strlen($in));
-
-            $out = "";
-            while (socket_last_error($this->connectionResource) == 0) {
-                $char = $this->sRead();
-                $out .= $char;
-                if (strpos($out, "\r\n") === false) {
-                    continue;
-                }
-                if ($this->readStatementHeader($out)) {
-                    $out = "";
-                    continue;
-                }
-                if ($this->errorOccured()) {
-                    throw new DB4DException(
-                        "There was an error with the 4D statement: {$this->getErrorCode()}\n{$this->getErrorDescription()}",
-                        DB4DException::STMT_RETURN_ERROR
-                    );
-                }
-                if ($this->resultType == "Update-Count \r\n") {
-                    return $this->rowCount;
-                }
-                if ($this->rowCount == 0) {
-                    return false;
-                }
-                if ($this->readStatementResult()) {
-                    break;
-                } else {
-                    break;
-                }
-            }
-            unset($out);
-
-            $this->row = array();
-            $in = str_replace(
-                str_pad($this->commandID, 3, "0", STR_PAD_LEFT)." EXECUTE-STATEMENT",
-                str_pad($this->commandID + 2, 3, "0", STR_PAD_LEFT)." EXECUTE-STATEMENT",
-                $in
-            );
-            $in = str_replace("FIRST-PAGE-SIZE : 1", "FIRST-PAGE-SIZE : {$this->rowCount}", $in);
-
-            socket_write($this->connectionResource, $in, strlen($in));
-
-            $out = "";
-            while (socket_last_error($this->connectionResource) == 0) {
-                $char = $this->sRead();
-                $out .= $char;
-                if (strpos($out, "\r\n") === false) {
-                    continue;
-                }
-                if ($this->readStatementHeader($out)) {
-                    $out = "";
-                    continue;
-                }
-                if ($this->readStatementResult()) {
-                    break;
-                } else {
-                    throw new DB4DException(
-                        "There was an error returning the result.", DB4DException::STMT_RETURN_ERROR
-                    );
-                }
-            }
-
-            return true;
-        }
+            $this->executed = true;
+            return true; // Zero-row SELECT and zero-row UPDATE are both successful executions.
+        } catch (DB4DException $error) { $this->recordError($error); throw $error; }
     }
 
-    /**
-     * Fetch all records of the result set.
-     * @param int $style Defines the style of the returning array.
-     * @return array A numeric array of numeric, associative or (default) numeric-associative arrays of the result set.
-     */
-    public function fetchAll($style = DB4DDriver::FETCH_BOTH)
+    private static function key(int|string $parameter): int|string
     {
-        if ($this->row === null) {
-            return $this->row;
+        if (is_int($parameter)) {
+            if ($parameter < 1) { throw new DB4DException('Positional bindings start at one.', 'HY093'); }
+            return $parameter - 1;
         }
-        switch ($style) {
-            case DB4DDriver::FETCH_NUM:
-                foreach ($this->row as &$row) {
-                    for ($i = 0; $i < count($this->columnNames); $i++) {
-                        $row[$i] = $row[$this->columnNames[$i]];
-                        unset($row[$this->columnNames[$i]]);
-                    }
-                }
-                $result = $this->row;
-                break;
-            case DB4DDriver::FETCH_ASSOC:
-                $result = $this->row;
-                break;
-            default:
-                foreach ($this->row as &$row) {
-                    for ($i = 0; $i < count($this->columnNames); $i++) {
-                        $row[$i] = $row[$this->columnNames[$i]];
-                        unset($row[$this->columnNames[$i]]);
-                        $row[$this->columnNames[$i]] = $row[$i];
-                    }
-                }
-                $result = $this->row;
-                break;
-        }
-
-        return $result;
+        $key = ltrim($parameter, ':');
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $key)) { throw new DB4DException('Invalid parameter name.', 'HY093'); }
+        return $key;
     }
 
-    /**
-     * Fetch a column of the result set.
-     * Fetch a column of the result set and advance the cursor by one row.
-     * @param int $index The index of the column to fetch.
-     * @return mixed | boolean The data of the column in the result set or FALSE, if there is no result.
-     */
-    public function fetchColumn($index = 0)
+    public function bindValue(int|string $parameter, #[\SensitiveParameter] mixed $value, int $type = PDO::PARAM_STR): bool
     {
-        if ($this->row === null) {
-            return false;
+        $key = self::key($parameter);
+        if ($type !== PDO::PARAM_LOB || !is_resource($value)) {
+            Parameters::literal($value, $type);
+        } elseif (get_resource_type($value) !== 'stream') {
+            throw new DB4DException('A LOB resource must be a readable stream.', 'HY105');
         }
-        $row = array_shift($this->row);
+        unset($this->bindings[$key]);
+        $this->bindings[$key] = $value; $this->bindingTypes[$key] = $type;
+        return true;
+    }
+    public function bindParam(int|string $parameter, #[\SensitiveParameter] mixed &$value, int $type = PDO::PARAM_STR, int $maxLength = 0, mixed $driverOptions = null): bool
+    {
+        if ($maxLength !== 0 || $driverOptions !== null || !in_array($type, [PDO::PARAM_STR, PDO::PARAM_INT, PDO::PARAM_BOOL, PDO::PARAM_NULL, PDO::PARAM_LOB], true)) {
+            throw new DB4DException('Output parameters and driver-specific bindings are unsupported.', 'IM001');
+        }
+        $key = self::key($parameter); unset($this->bindings[$key]);
+        $this->bindings[$key] =& $value; $this->bindingTypes[$key] = $type;
+        return true;
+    }
+    public function getRawSql(#[\SensitiveParameter] ?array $parameters = null): string
+    {
+        $values = $parameters === null ? $this->bindings : Parameters::normalize($parameters);
+        return Parameters::render($this->queryString, $values, $parameters === null ? $this->bindingTypes : []);
+    }
+    public static function parseArguments(#[\SensitiveParameter] mixed &$value): void { $value = Parameters::literal($value); }
 
-        return $row[$this->columnNames[$index]];
+    public static function validFetchMode(mixed $mode): bool
+    {
+        return is_int($mode) && in_array($mode, [PDO::FETCH_ASSOC, PDO::FETCH_NUM, PDO::FETCH_BOTH, PDO::FETCH_OBJ,
+            PDO::FETCH_COLUMN, DB4DDriver::FETCH_ASSOC, DB4DDriver::FETCH_NUM, DB4DDriver::FETCH_BOTH], true);
+    }
+    private static function normalizeMode(int $mode): int
+    {
+        return match ($mode) { DB4DDriver::FETCH_ASSOC => PDO::FETCH_ASSOC, DB4DDriver::FETCH_NUM => PDO::FETCH_NUM,
+            DB4DDriver::FETCH_BOTH => PDO::FETCH_BOTH, default => $mode };
+    }
+    private function validateMode(int $mode, array $args): void
+    {
+        if (!self::validFetchMode($mode) || ($args && ($mode !== PDO::FETCH_COLUMN || count($args) !== 1 || !is_int($args[0]) || $args[0] < 0))) {
+            throw new DB4DException('Unsupported fetch mode or fetch argument.', 'IM001');
+        }
+    }
+    public function setFetchMode(int $mode, mixed ...$args): bool
+    {
+        $this->validateMode($mode, $args); $this->fetchMode = $mode; $this->fetchArgs = $args;
+        return true;
     }
 
-    /**
-     * Fetch a row of the result set.
-     * Fetch a row of the result set and advance the cursor by one row.
-     * @param int $style Defines the style of the returning array.
-     * @return array | null The row of the result set as array, depending on the constant array style or NULL if the result set is empty.
-     */
-    public function fetchRow($style = DB4DDriver::FETCH_BOTH)
+    private function nextRow(): array|false
     {
-        if ($this->row === null) {
-            return $this->row;
-        }
-        switch ($style) {
-            case DB4DDriver::FETCH_NUM:
-                $tmp = array_shift($this->row);
-                $row = array();
-                if ($tmp !== null) {
-                    foreach ($tmp as $column => $value) {
-                        array_push($row, array_shift($tmp));
-                        if ($column == "_ID") {
-                            array_pop($row);
-                        }
-                    }
-                } else {
-                    $row = null;
+        if (!$this->executed) { throw new DB4DException('Execute the statement before fetching.', 'HY010'); }
+        if ($this->resultType === 'Update-Count') { return false; }
+        if ($this->pageIndex >= count($this->page)) {
+            if ($this->received >= $this->rowCount || $this->statementID === null) { return false; }
+            try {
+                $last = min($this->rowCount - 1, $this->received + $this->driver->settings()['page_size'] - 1);
+                $result = $this->driver->fetchPage($this->statementID, $this->received, $last, $this->metadata);
+                if ($result['rowCount'] !== $this->rowCount || $result['metadata'] !== $this->metadata || ($result['id'] !== null && $result['id'] !== $this->statementID)) {
+                    $this->driver->close();
+                    throw new DB4DException('4D changed result metadata during paging.', '08S01');
                 }
-                break;
-            case DB4DDriver::FETCH_ASSOC:
-                $row = array_shift($this->row);
-                unset($row["_ID"]);
-                break;
-            default:
-                $tmp = array_shift($this->row);
-                $row = array();
-                if ($tmp !== null) {
-                    for ($i = 0; $i < count($this->columnNames); $i++) {
-                        $row[$i] = $tmp[$this->columnNames[$i]];
-                        $row[$this->columnNames[$i]] = $tmp[$this->columnNames[$i]];
-                    }
-                } else {
-                    $row = null;
-                }
-                break;
+                $this->page = $result['rows']; $this->pageIndex = 0; $this->received += count($this->page);
+            } catch (DB4DException $error) { $this->recordError($error); throw $error; }
         }
-
+        $row = $this->page[$this->pageIndex++];
+        if ($this->driver->getAttribute(PDO::ATTR_STRINGIFY_FETCHES)) {
+            foreach ($row as &$value) { if ($value !== null && !is_string($value)) { $value = is_bool($value) ? ($value ? '1' : '0') : (string)$value; } }
+        }
         return $row;
     }
 
-    /**
-     * Read the names of the affected colums.
-     * @return array a numerical array containing the column names.
-     */
-    public function readMetadata()
+    private function formatRow(array $row, int $mode, array $args): array|object|string|int|float|bool|null
     {
-        return $this->columnNames;
-    }
-
-    public function errorOccured()
-    {
-        return $this->error;
-    }
-
-    public function getErrorCode()
-    {
-        return str_replace(array("\r", "\n"), '', $this->errorCode);
-    }
-
-    public function getErrorComponentCode()
-    {
-        return str_replace(array("\r", "\n"), '', $this->errorComponentCode);
-    }
-
-    public function getErrorDescription()
-    {
-        return str_replace(array("\r", "\n"), '', $this->errorDescription);
-    }
-
-    /**
-     * Get sql code of a query.
-     * Parses the arguments and injects them into the prepared query before returning it.
-     * @param array $parameters The array with the optional arguments of the query.
-     * @return string The runnable sql command
-     * @throws DB4DException
-     */
-    public function getRawSql($parameters = null)
-    {
-        if ($parameters !== null && (!is_array($parameters) || substr_count($this->preparedQuery, "?") != count(
-                    $parameters
-                ))) {
-            throw new DB4DException("Count of arguments does not match.", DB4DException::STMT_UNMATCHING_ARGS);
-        } else {
-            $in = $this->preparedQuery;
-            if ($parameters !== null) {
-                foreach($parameters as $karg=>$arg) {
-                    $this->parseArguments($parameters[$karg]);
-                }
-                $in = preg_replace(array_fill(0, count($parameters), "/\?/"), $parameters, $this->preparedQuery, 1);
-                $in = str_replace(":QUOT:", "?", $in);
-            }
-            $sql = substr($in, 35, strlen($in) - 85).";";
-
-            return $sql;
+        $mode = self::normalizeMode($mode);
+        if ($mode === PDO::FETCH_NUM) { return $row; }
+        if ($mode === PDO::FETCH_COLUMN) {
+            $index = $args[0] ?? 0;
+            if (!array_key_exists($index, $row)) { throw new DB4DException('Column index is out of range.', '07009'); }
+            return $row[$index];
         }
+        $names = $this->readMetadata(); $assoc = [];
+        foreach ($row as $i => $value) { $assoc[$names[$i]] = $value; }
+        if ($mode === PDO::FETCH_OBJ) { return (object)$assoc; }
+        return $mode === PDO::FETCH_BOTH ? $row + $assoc : $assoc;
     }
 
-    public function getStatementID()
+    public function fetch(int $mode = PDO::FETCH_DEFAULT, int $cursorOrientation = PDO::FETCH_ORI_NEXT, int $cursorOffset = 0): mixed
     {
-        return $this->statementID;
+        if ($cursorOrientation !== PDO::FETCH_ORI_NEXT || $cursorOffset !== 0) { throw new DB4DException('Only forward-only fetching is supported.', 'IM001'); }
+        $default = $mode === PDO::FETCH_DEFAULT;
+        $mode = $default ? ($this->fetchMode ?? $this->driver->getAttribute(PDO::ATTR_DEFAULT_FETCH_MODE)) : $mode;
+        $args = $default ? $this->fetchArgs : [];
+        $this->validateMode($mode, $args);
+        $row = $this->nextRow();
+        return $row === false ? false : $this->formatRow($row, $mode, $args);
     }
-
-    /**
-     * Read the header of the result set.
-     * @param String $line A CRLF terminated input string.
-     * @return boolean TRUE if the input string was succesfully parsed, else FALSE.
-     */
-    public function readStatementHeader($line)
+    public function fetchRow(int $style = DB4DDriver::FETCH_BOTH): mixed
     {
-        if (strcmp($line, "\r\n") === 0) {
-            return false;
+        $row = $this->fetch($style);
+        return $row === false ? null : $row;
+    }
+    public function fetchAll(int $mode = PDO::FETCH_DEFAULT, mixed ...$args): array
+    {
+        $useDefault = $mode === PDO::FETCH_DEFAULT;
+        $mode = $useDefault ? ($this->fetchMode ?? $this->driver->getAttribute(PDO::ATTR_DEFAULT_FETCH_MODE)) : $mode;
+        if ($useDefault && !$args) { $args = $this->fetchArgs; }
+        $this->validateMode($mode, $args); $result = [];
+        while (($row = $this->nextRow()) !== false) { $result[] = $this->formatRow($row, $mode, $args); }
+        return $result;
+    }
+    public function fetchColumn(int $index = 0): mixed
+    {
+        if ($index < 0 || ($this->executed && $index >= $this->columnCount())) { throw new DB4DException('Column index is out of range.', '07009'); }
+        $row = $this->nextRow();
+        return $row === false ? false : $row[$index];
+    }
+    public function getIterator(): \Traversable
+    {
+        // Do not use fetch() as the EOF condition: a valid FETCH_COLUMN value can be false.
+        $mode = $this->fetchMode ?? $this->driver->getAttribute(PDO::ATTR_DEFAULT_FETCH_MODE);
+        while (($row = $this->nextRow()) !== false) { yield $this->formatRow($row, $mode, $this->fetchArgs); }
+    }
+    public function closeCursor(): bool
+    {
+        $id = $this->statementID; $this->statementID = null; $this->page = []; $this->pageIndex = 0;
+        $this->received = $this->rowCount;
+        if ($id !== null && $this->driver->isOpen()) {
+            try { $this->driver->closeStatement($id); }
+            catch (DB4DException $error) { $this->recordError($error); throw $error; }
         }
-        if (strpos($line, " OK") !== false) {
-            $this->error = false;
-
-            return true;
-        } else {
-            if (strpos($line, " ERROR") !== false) {
-                $this->error = true;
-
-                return true;
-            }
-        }
-        $aTmp = explode(":", $line);
-        switch ($aTmp[0]) {
-            case("Statement-ID"):
-                $this->statementID = intval($aTmp[1]);
-
-                return true;
-                break;
-            case("Command-Count"):
-                $this->commandCount = intval($aTmp[1]);
-
-                return true;
-                break;
-            case("Result-Type"):
-                $this->resultType = $aTmp[1];
-
-                return true;
-                break;
-            case("Column-Count"):
-                $this->columnCount = intval($aTmp[1]);
-
-                return true;
-                break;
-            case("Row-Count"):
-                $this->rowCount = intval($aTmp[1]);
-
-                return true;
-                break;
-            case("Column-Types"):
-                $this->columnTypes = explode(" ", $aTmp[1], -1);
-
-                return true;
-                break;
-            case("Column-Aliases"):
-                $this->columnNames = str_replace(array(" [", "[", "]"), "", explode("]", $aTmp[1], -1));
-
-                return true;
-                break;
-            case("Column-Updateability"):
-                $this->columnUpdateability = explode(" ", $aTmp[1]);
-                array_shift($this->columnUpdateability);
-
-                return true;
-                break;
-            case("Row-Count-Sent"):
-                $this->rowCountSent = intval($aTmp[1]);
-
-                return true;
-                break;
-            case("Error-Code"):
-                $this->errorCode = $aTmp[1];
-
-                return true;
-                break;
-            case("Error-Component-Code"):
-                $this->errorComponentCode = $aTmp[1];
-
-                return true;
-                break;
-            case("Error-Description"):
-                $this->errorDescription = $aTmp[1];
-
-                return true;
-                break;
-        }
-
-        return false;
+        return true;
     }
-
-    /**
-     * Read the data of the result set.
-     * @return boolean TRUE, if rowCount equals rows sent, else FALSE
-     */
-    public function readStatementResult()
+    public function rowCount(): int { return $this->rowCount; }
+    public function columnCount(): int { return count($this->metadata['types'] ?? []); }
+    public function readMetadata(): array
     {
-        if ($this->row === null) {
-            $rowCount = 0;
-        } else {
-            $rowCount = count($this->row);
-        }
-        while (socket_last_error($this->connectionResource) == 0) {
-            if (in_array("Y\r\n", $this->columnUpdateability)) {
-                $this->sRead();
-                $this->row[$rowCount]["_ID"] = ord($this->sRead()) * pow(256, 0) + ord($this->sRead()) * pow(
-                        256,
-                        1
-                    ) + ord($this->sRead()) * pow(256, 2) + ord($this->sRead()) * pow(256, 3);
-            };
-
-            for ($i = 0; $i < $this->columnCount; $i++) {
-                $char = $this->sRead();
-                // 1=Non-Null Value, 0=Null Value, 2=Error
-                if ($char == 0) {
-                    continue;
-                } elseif ($char == 1) {
-                    switch ($this->columnTypes[$i]) {
-                        case "VK_BOOLEAN":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinBool();
-                            break;
-                        case "VK_BLOB":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinBlob();
-                            break;
-                        case "VK_BYTE":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinByte();
-                            break;
-                        case "VK_TIMESTAMP":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinTime();
-                            break;
-                        case "VK_DURATION":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinDuration();
-                            break;
-                        case "VK_FLOAT":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinFloat();
-                            break;
-                        case "VK_IMAGE":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinImage();
-                            break;
-                        case "VK_LONG":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinLong();
-                            break;
-                        case "VK_LONG8":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinLong8();
-                            break;
-                        case "VK_REAL":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinReal();
-                            break;
-                        case "VK_TIME":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinTime();
-                            break;
-                        case "VK_STRING":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinString();
-                            break;
-                        case "VK_WORD":
-                            $this->row[$rowCount][$this->columnNames[$i]] = $this->readinByte();
-                            break;
-                    }
-                } elseif ($char == 2) {
-                    $errorCode = $this->sRead(8);
-                    echo $errorCode;
-                    exit();
-                }
-            }
-            $rowCount++;
-            if (($rowCount) == $this->rowCountSent) {
-                if (count($this->row) < $this->rowCount) {
-                    return false;
-                } elseif (count($this->row) == $this->rowCount) {
-                    return true;
-                } else {
-                    return false;
-                }
-            };
-        }
-
-        return false;
+        $names = $this->metadata['names'] ?? [];
+        return match ($this->driver->getAttribute(PDO::ATTR_CASE)) {
+            PDO::CASE_UPPER => array_map(static fn($n) => mb_strtoupper($n, 'UTF-8'), $names),
+            PDO::CASE_LOWER => array_map(static fn($n) => mb_strtolower($n, 'UTF-8'), $names), default => $names,
+        };
     }
-
-    /**
-     * Decode Blob.
-     * @return string
-     */
-    private function readinBlob()
+    public function getStatementID(): ?int { return $this->statementID; }
+    public function errorCode(): string { return $this->lastError[0]; }
+    public function errorInfo(): array { return $this->lastError; }
+    public function errorOccured(): bool { return $this->errorCode() !== '00000'; }
+    public function getErrorCode(): int { return $this->lastError[1] ?? 0; }
+    public function getErrorDescription(): string { return $this->lastError[2] ?? ''; }
+    private function recordError(DB4DException $error): void { $this->lastError = $error->errorInfo; $this->driver->recordError($error); }
+    public function __destruct()
     {
-        $length = $this->readinLong();
-        $data = $this->sRead($length);
-
-        return $data;
-    }
-
-    /**
-     * Decode Boolean.
-     * @return boolean
-     */
-    private function readinBool()
-    {
-        return (boolean)ord($this->sRead()) * pow(256, 0) + ord($this->sRead()) * pow(256, 1);
-    }
-
-    /**
-     * Decode Byte.
-     * @return integer
-     */
-    private function readinByte()
-    {
-        return ord($this->sRead()) * pow(256, 0) + ord($this->sRead()) * pow(256, 1);
-    }
-
-    /**
-     * Decode Time
-     * @return string
-     */
-    private function readinDuration()
-    {
-        return $this->readinLong8();
-    }
-
-    /**
-     * Decode Float.
-     * @return float
-     */
-    private function readinFloat()
-    {
-        $exp = $this->readinLong();
-        $sign = (int)$this->sRead();
-        $dataLength = $this->readinLong();
-        $data = (int)$this->sRead($dataLength);
-
-        return pow(-1, $sign) * (1 + $data * pow(2, -23)) * pow(2, $exp - 127);
-    }
-
-    /**
-     * Decode Image.
-     * @return string
-     */
-    private function readinImage()
-    {
-        return $this->readinBlob();
-    }
-
-    /**
-     * Decode Long.
-     * @return integer
-     */
-    private function readinLong()
-    {
-        return ord($this->sRead()) * pow(256, 0) + ord($this->sRead()) * pow(256, 1) + ord($this->sRead()) * pow(
-                256,
-                2
-            ) + ord($this->sRead()) * pow(256, 3);
-    }
-
-    /**
-     * Decode Long8.
-     * @return integer
-     */
-    private function readinLong8()
-    {
-        return ord($this->sRead()) * pow(256, 0) + ord($this->sRead()) * pow(256, 1) + ord($this->sRead()) * pow(
-                256,
-                2
-            ) + ord($this->sRead()) * pow(256, 3) + ord($this->sRead()) * pow(256, 4) + ord($this->sRead()) * pow(
-                256,
-                5
-            ) + ord($this->sRead()) * pow(256, 6) + ord($this->sRead()) * pow(256, 7);
-    }
-
-    /**
-     * Decode Real.
-     * @return float
-     */
-    private function readinReal()
-    {
-        return unpack("d", $this->sRead(8))[1];
-    }
-
-    /**
-     * Decode String.
-     * @return string UTF-16 converted string
-     */
-    private function readinString()
-    {
-        $length = pow(256, 4) - $this->readinLong();
-        if ($length == pow(256, 4)) {
-            return "";
-        }
-        $s = $this->sRead(2 * $length);
-
-        return mb_convert_encoding($s, 'UTF-8', 'UTF-16LE');
-    }
-
-    /**
-     * Decode Date.
-     * @return string
-     */
-    private function readinTime()
-    {
-        $year = ord($this->sRead()) * pow(256, 0) + ord($this->sRead()) * pow(256, 1);
-        $month = ord($this->sRead());
-        $day = ord($this->sRead());
-        $milis = $this->readinLong();
-        if ($milis == 0) {
-            return str_pad($day, 2, "0", STR_PAD_LEFT).".".str_pad($month, 2, "0", STR_PAD_LEFT).".".str_pad(
-                    $year,
-                    4,
-                    "0",
-                    STR_PAD_LEFT
-                );
-        }
-        $hours = $milis / (3600 * 1000);
-        $minutes = ($milis - ($hours * 3600 * 1000)) / (60 * 1000);
-        $seconds = ($milis - ($hours * 3600 * 1000) - ($minutes * 60 * 1000)) / 1000;
-
-        return str_pad($day, 2, "0", STR_PAD_LEFT).
-            ".".
-            str_pad($month, 2, "0", STR_PAD_LEFT).
-            ".".
-            str_pad($year, 4, "0", STR_PAD_LEFT).
-            " ".
-            str_pad($hours, 2, "0", STR_PAD_LEFT).
-            ":".
-            str_pad($minutes, 2, "0", STR_PAD_LEFT).
-            ":".
-            str_pad($seconds, 2, "0", STR_PAD_LEFT);
-    }
-
-    private function sRead($length = 1)
-    {
-        $s = socket_read($this->connectionResource, $length);
-        if ($length > 1) {
-            $j = 0;
-            $lens = strlen($s);
-            while ($lens < $length || $j < 5) {
-                $s .= socket_read($this->connectionResource, ($length - $lens));
-                $lens = strlen($s);
-                $j++;
-            }
-        }
-
-        return $s;
+        try { $this->closeCursor(); } catch (\Throwable) { /* Destruction must never hide an original exception. */ }
     }
 }
