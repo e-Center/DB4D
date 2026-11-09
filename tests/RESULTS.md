@@ -17,3 +17,5 @@ Couverture exécutée : paramètres littéraux et nommés, apostrophes/dollars/s
 ## Complément du 9 novembre 2026
 
 Version 2.1 : 97 tests réussis, 0 échec, PHP 8.5.10 local 64 bits. Voir CHANGELOG.md et tests/compatibility.php pour les nouveaux contrats. Toujours 0 connexion à un moteur 4D réel.
+
+Les 97 tests ont ensuite réussi sous PHP 8.5.12 Debian 13 ARM64 et x86_64 sous émulation, dans des conteneurs en lecture seule, /tmp temporaire, --network none. Les échanges du simulateur restent sur loopback ; 0 moteur 4D réel contacté.
