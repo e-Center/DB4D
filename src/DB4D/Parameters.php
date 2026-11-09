@@ -8,6 +8,23 @@ final class Parameters
 {
     public static function render(string $sql, #[\SensitiveParameter] array $values, array $types = []): string
     {
+        return self::walk($sql,$values,$types,static fn($value,$type)=>self::literal($value,$type));
+    }
+
+    public static function compile(string $sql, #[\SensitiveParameter] array $values, array $types, int $maximum, int $bodyMaximum): array
+    {
+        $wireTypes=[];$body='';$cache=[];
+        $query=self::walk($sql,$values,$types,static function($value,$type,$key) use (&$wireTypes,&$body,&$cache,$maximum,$bodyMaximum) {
+            // Repeated named LOB parameters must not consume their stream twice.
+            [$wireType,$bytes]=$cache[$key] ??= WireParameters::encode($value,$type,$maximum);
+            if(strlen($body)+strlen($bytes)>$bodyMaximum){throw new DB4DException('Parameter body exceeds its byte limit.','HY001');}
+            $wireTypes[]=$wireType;$body.=$bytes;return '?';
+        });
+        return [$query,$wireTypes,$body];
+    }
+
+    private static function walk(string $sql, array $values, array $types, callable $encode): string
+    {
         $out = ''; $used = []; $position = 0; $kind = null; $length = strlen($sql);
         for ($i = 0; $i < $length;) {
             $char = $sql[$i]; $next = $sql[$i + 1] ?? '';
@@ -54,7 +71,7 @@ final class Parameters
                 else { preg_match('/\G:([A-Za-z_][A-Za-z0-9_]*)/', $sql, $match, 0, $i); $key = $match[1]; $i += strlen($match[0]); }
                 if (!array_key_exists($key, $values)) { throw new DB4DException('Missing SQL parameter.', 'HY093'); }
                 $used[$key] = true;
-                $out .= self::literal($values[$key], $types[$key] ?? null);
+                $out .= $encode($values[$key], $types[$key] ?? null, $key);
                 continue;
             }
             $out .= $char; $i++;

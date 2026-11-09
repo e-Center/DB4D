@@ -24,6 +24,7 @@ namespace DB4D;
 /** Catchable by existing catch (PDOException $e) application code. */
 class DB4DException extends \PDOException
 {
+    public bool $synchronized = false;
     public const SOC_CREATION_ERROR = 0;
     public const SOC_CONNECTION_ERROR = 1;
     public const STMT_RETURN_ERROR = 2;

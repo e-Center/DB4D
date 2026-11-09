@@ -67,6 +67,6 @@ final class Codec
             return $m === 0 ? $date : $date . sprintf(' %02d:%02d:%02d', $h, $min, $s);
         }
         // Match the textual date contract of PDO_4D, including milliseconds.
-        return sprintf('%04d/%02d/%02d %02d:%02d:%02d.%03d', $t['year'], $t['month'], $t['day'], $h, $min, $s, $m % 1000);
+        return sprintf($format === 'pdo4d' ? '%04d-%02d-%02d %02d:%02d:%02d.%03d' : '%04d/%02d/%02d %02d:%02d:%02d.%03d', $t['year'], $t['month'], $t['day'], $h, $min, $s, $m % 1000);
     }
 }

@@ -2,7 +2,9 @@
 
 Implémentation PHP du protocole SQL 4D, destinée à remplacer les usages applicatifs de l’extension PDO_4D sur PHP récent. PHP **8.2 à 8.5**, environnement **64 bits**, extensions PDO et mbstring ; aucune extension PDO_4D, sockets ou bibliothèque native 4D requise.
 
-**Branche 2.0 en cours de qualification :** transport et compatibilité PDO repris, avec tests réseau locaux. Aucun serveur 4D réel n’a encore été utilisé pour valider cette version. Voir [la migration et ses limites](MIGRATION.md) et [les résultats exécutés](tests/RESULTS.md). La version d’origine annonçait des essais sur 4D v11–v13 en ASCII ; cela ne qualifie pas cette nouvelle version ni 4D v18.
+**Version 2.1 sur `master` en cours de qualification :** transport et compatibilité PDO repris, avec tests réseau locaux. Aucun serveur 4D réel n’a encore été utilisé pour valider cette version. Voir [la migration et ses limites](MIGRATION.md) et [les résultats exécutés](tests/RESULTS.md). La version d’origine annonçait des essais sur 4D v11–v13 en ASCII ; cela ne qualifie pas cette nouvelle version ni 4D v18.
+
+Voir aussi les [changements et nouvelles fonctions 2.1](CHANGELOG.md), notamment les paramètres binaires par défaut, les formats de date et les modes de lecture supplémentaires.
 
 ## Installation
 
@@ -32,7 +34,7 @@ Le constructeur historique `new DB4DDriver($host, $port, $user, $password, $opti
 | `page_size` | 100 | Lignes par page |
 | `max_field_bytes` | 16 Mio | Taille maximale d’un champ reçu et d’une requête SQL rendue |
 | `max_page_bytes` | 32 Mio | Octets binaires reçus par page |
-| `timestamp_format` | `pdo` | `YYYY/MM/DD HH:MM:SS.mmm` ; `legacy` conserve le format DB4D précédent |
+| `timestamp_format` | `pdo4d` | `YYYY-MM-DD HH:MM:SS.mmm` ; `pdo` conserve les barres obliques de 2.0 et `legacy` le format DB4D précédent |
 
 `execute()` renvoie un booléen de succès, `query()` un statement, `exec()` le nombre de lignes affectées. C’est un changement par rapport aux retours parfois numériques/faux de l’ancienne bibliothèque. Les méthodes PDO courantes et les anciens modes DB4D sont pris en charge ; les modes avancés non implémentés sont refusés. **Cette classe n’est pas un objet PDO natif.**
 

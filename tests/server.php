@@ -26,6 +26,11 @@ try {
         foreach ($step['headers'] ?? [] as $key => $value) {
             if (($headers[strtolower($key)] ?? null) !== $value) { throw new RuntimeException('Wrong request header'); }
         }
+        if(isset($step['request_body'])){
+            $expected=base64_decode($step['request_body'],true);$received='';
+            while(strlen($received)<strlen($expected)){$part=fread($stream,strlen($expected)-strlen($received));if($part===false||$part===''){throw new RuntimeException('Truncated parameter body');}$received.=$part;}
+            if($received!==$expected){throw new RuntimeException('Parameter bytes changed');}
+        }
         if (isset($step['sleep_ms'])) { usleep($step['sleep_ms'] * 1000); }
         if ($step['disconnect'] ?? false) { fclose($stream); $stream = null; break; }
         $response = sprintf("%03d %s\r\n", ($step['wrong_id'] ?? false) ? $id + 1 : $id, $step['status'] ?? 'OK');

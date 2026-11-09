@@ -64,7 +64,7 @@ function peer(array $steps, Closure $fn, array $options = []): void {
         if ($code !== 0) { throw new RuntimeException('Local peer failed: ' . $error); }
     }
 }
-function connectPeer(int $port, array $options = []): DB4DDriver { return new DB4DDriver('127.0.0.1', $port, 'fixture-user', 'test-password', $options); }
+function connectPeer(int $port, array $options = []): DB4DDriver { return new DB4DDriver('127.0.0.1', $port, 'fixture-user', 'test-password', $options + [PDO::ATTR_EMULATE_PREPARES=>true,'timestamp_format'=>'pdo']); }
 
 foreach (["price $1", ':QUOT:', "line1\r\nline2", "l'été ? \\ $2", "\r\nQUIT\r\n\r\n", '日本語 🎉'] as $value) {
     test('literal preservation ' . bin2hex($value), static function() use ($value) {
@@ -163,7 +163,7 @@ test('transactions change state after successful response only', static function
     $err = ['command' => 'EXECUTE-STATEMENT', 'sql' => 'COMMIT', 'status' => 'ERROR', 'response' => ['Error-Code' => '123', 'Error-Description' => 'private echoed fixture']];
     peer([login(), update('START'), $err, update('ROLLBACK'), update('START'), update('COMMIT')], static function($port) {
         $db = connectPeer($port); same($db->inTransaction(), false); $db->beginTransaction(); same($db->inTransaction(), true);
-        fails(static fn() => $db->beginTransaction(), '25000'); $e = fails(static fn() => $db->commit(), '42000');
+        fails(static fn() => $db->beginTransaction(), '25000'); $e = fails(static fn() => $db->commit(), 'HY000');
         same(str_contains($e->getMessage(), 'private'), false); same($db->inTransaction(), true);
         $db->rollBack(); same($db->inTransaction(), false); $db->beginTransaction(); $db->commit(); same($db->inTransaction(), false);
         fails(static fn() => $db->commit(), '25000');
@@ -171,7 +171,7 @@ test('transactions change state after successful response only', static function
 });
 test('server SQL error updates both errorInfo and permits next request', static function() {
     peer([login(), ['command' => 'EXECUTE-STATEMENT', 'status' => 'ERROR', 'response' => ['Error-Code' => '1600', 'Error-Description-Base64' => base64_encode('sensitive')]], update('UPDATE recovered', 2)], static function($port) {
-        $db = connectPeer($port); $s = $db->prepare('bad SQL'); $e = fails(static fn() => $s->execute(), '42000'); same($s->errorInfo(), $e->errorInfo); same($db->errorInfo(), $e->errorInfo);
+        $db = connectPeer($port); $s = $db->prepare('bad SQL'); $e = fails(static fn() => $s->execute(), 'HY000'); same($s->errorInfo(), $e->errorInfo); same($db->errorInfo(), $e->errorInfo);
         same($db->exec('UPDATE recovered'), 2); same($db->errorCode(), '00000');
     });
 });
@@ -221,7 +221,7 @@ test('unsupported attributes modes and APIs are explicit', static function() {
         $db = connectPeer($port); fails(static fn() => $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT), 'IM001');
         fails(static fn() => $db->setAttribute(PDO::ATTR_PERSISTENT, true), 'IM001'); fails(static fn() => $db->lastInsertId(), 'IM001');
         $s = $db->prepare('SELECT ?'); fails(static fn() => $s->bindValue(0, 'x'), 'HY093');
-        fails(static fn() => $s->setFetchMode(PDO::FETCH_CLASS), 'IM001'); fails(static fn() => $s->fetch(PDO::FETCH_NUM), 'HY010');
+        fails(static fn() => $s->setFetchMode(PDO::FETCH_LAZY), 'IM001'); fails(static fn() => $s->fetch(PDO::FETCH_NUM), 'HY010');
     });
 });
 test('DSN recognizes only 4D host port and UTF-8', static function() {
@@ -292,7 +292,7 @@ test('page byte bound covers cumulative small fields', static function() {
 });
 test('invalid cell and unsupported multiple results close channel', static function() {
     $step = selectStep('SELECT invalidcell', [[1, 'a']]); $step['body'] = base64_encode('2' . pack('q', 17));
-    peer([login(), $step], static function($port) { $db = connectPeer($port); fails(static fn() => $db->query('SELECT invalidcell'), '08S01'); });
+    peer([login(), $step], static function($port) { $db = connectPeer($port); fails(static fn() => $db->query('SELECT invalidcell'), 'HY000'); });
     $step['response']['Command-Count'] = '2';
     peer([login(), $step], static function($port) { $db = connectPeer($port); fails(static fn() => $db->query('SELECT invalidcell'), 'IM001'); });
 });
@@ -330,6 +330,8 @@ test('short writes continue until the exact bytes are sent', static function() {
     $bytes = str_repeat('abcdef', 100); $transport->write($bytes); same(ShortWriteFixture::$written, $bytes); $transport->close();
     stream_wrapper_unregister('db4dshort');
 });
+
+require __DIR__.'/compatibility.php';
 
 $passed = 0; $failed = 0;
 foreach ($tests as $name => $fn) {

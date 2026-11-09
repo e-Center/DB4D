@@ -26,6 +26,8 @@ use PDO;
 /** Pure PHP 4D connection. This is deliberately not a native PDO subclass. */
 class DB4DDriver
 {
+    public const ATTR_CHARSET = 1000;
+    public const ATTR_PREFERRED_IMAGE_TYPES = 1001;
     public const FETCH_NUM = 0xA0;
     public const FETCH_ASSOC = 0xA1;
     public const FETCH_BOTH = 0xA2;
@@ -34,14 +36,15 @@ class DB4DDriver
     private bool $transaction = false;
     private array $lastError = ['00000', null, null];
     private array $attributes = [PDO::ATTR_CASE => PDO::CASE_NATURAL, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_BOTH, PDO::ATTR_STRINGIFY_FETCHES => false];
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_BOTH, PDO::ATTR_STRINGIFY_FETCHES => false,
+        PDO::ATTR_EMULATE_PREPARES => false, self::ATTR_CHARSET => 'UTF-8', self::ATTR_PREFERRED_IMAGE_TYPES => 'jpg'];
     private array $settings;
 
     public function __construct(string $host, int $port, string $user, #[\SensitiveParameter] string $pass, array $options = [])
     {
         if (PHP_INT_SIZE !== 8) { throw new DB4DException('DB4D requires a 64-bit PHP runtime.', 'IM001'); }
         $this->settings = ['connect_timeout' => 5.0, 'read_timeout' => 10.0, 'page_size' => 100,
-            'max_field_bytes' => 16777216, 'max_page_bytes' => 33554432, 'timestamp_format' => 'pdo'];
+            'max_field_bytes' => 16777216, 'max_page_bytes' => 33554432, 'timestamp_format' => 'pdo4d'];
         foreach ($options as $key => $value) {
             if (is_int($key)) { $this->setAttribute($key, $value); }
             elseif (array_key_exists($key, $this->settings)) { $this->settings[$key] = $value; }
@@ -57,13 +60,13 @@ class DB4DDriver
                 throw new DB4DException('Invalid DB4D size limit.', 'HY024');
             }
         }
-        if (!in_array($this->settings['timestamp_format'], ['pdo', 'legacy'], true)) {
+        if (!in_array($this->settings['timestamp_format'], ['pdo4d', 'pdo', 'legacy'], true)) {
             throw new DB4DException('Invalid timestamp format.', 'HY024');
         }
         $this->connection = Transport::connect($host, $port, (float)$this->settings['connect_timeout'], (float)$this->settings['read_timeout']);
         try {
             $this->exchange('LOGIN', ['USER-NAME-BASE64' => base64_encode($user),
-                'USER-PASSWORD-BASE64' => base64_encode($pass), 'REPLY-WITH-BASE64-TEXT' => 'Y', 'PROTOCOL-VERSION' => '0.1a']);
+                'USER-PASSWORD-BASE64' => base64_encode($pass), 'REPLY-WITH-BASE64-TEXT' => 'Y', 'PROTOCOL-VERSION' => '0.1a', 'PREFERRED-IMAGE-TYPES'=>$this->attributes[self::ATTR_PREFERRED_IMAGE_TYPES]]);
         } catch (\Throwable $e) { $this->close(); throw $e; }
     }
 
@@ -124,10 +127,12 @@ class DB4DDriver
             PDO::ATTR_ERRMODE => $value === PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => DB4DStatement::validFetchMode($value),
             PDO::ATTR_STRINGIFY_FETCHES => is_bool($value),
-            PDO::ATTR_EMULATE_PREPARES => $value === true,
+            PDO::ATTR_EMULATE_PREPARES => is_bool($value),
+            self::ATTR_CHARSET => $value === 'UTF-8',
+            self::ATTR_PREFERRED_IMAGE_TYPES => is_string($value) && preg_match('/^[a-z0-9]{1,12}(?:,[a-z0-9]{1,12}){0,15}$/D',$value),
             default => false,
         };
-        if (!$valid) { throw new DB4DException('Unsupported PDO attribute or value; exceptions and emulated prepares are mandatory.', 'IM001'); }
+        if (!$valid) { throw new DB4DException('Unsupported PDO attribute or value; exception mode is mandatory.', 'IM001'); }
         $this->attributes[$attribute] = $value;
         return true;
     }
@@ -135,8 +140,7 @@ class DB4DDriver
     public function getAttribute(int $attribute): mixed
     {
         return match ($attribute) {
-            PDO::ATTR_DRIVER_NAME => '4D', PDO::ATTR_CLIENT_VERSION => 'DB4D 2.0-dev',
-            PDO::ATTR_EMULATE_PREPARES => true,
+            PDO::ATTR_DRIVER_NAME => '4D', PDO::ATTR_CLIENT_VERSION => 'DB4D 2.1-dev',
             default => $this->attributes[$attribute] ?? throw new DB4DException('Unsupported PDO attribute.', 'IM001'),
         };
     }
@@ -171,11 +175,14 @@ class DB4DDriver
     }
 
     /** Internal statement transport; request and complete response are consumed atomically. */
-    public function executeSql(#[\SensitiveParameter] string $sql): array
+    public function executeSql(#[\SensitiveParameter] string $sql, array $types = [], #[\SensitiveParameter] string $body = ''): array
     {
         if (strlen($sql) > $this->settings['max_field_bytes']) { throw new DB4DException('SQL exceeds its configured size limit.', 'HY001'); }
-        $result = $this->exchange('EXECUTE-STATEMENT', ['STATEMENT-BASE64' => base64_encode($sql),
-            'OUTPUT-MODE' => 'RELEASE', 'FIRST-PAGE-SIZE' => (string)$this->settings['page_size']]);
+        if(strlen($body)>$this->settings['max_page_bytes']){throw new DB4DException('Parameter body exceeds its byte limit.','HY001');}
+        $fields=['STATEMENT-BASE64'=>base64_encode($sql),'OUTPUT-MODE'=>'RELEASE',
+            'PREFERRED-IMAGE-TYPES'=>$this->attributes[self::ATTR_PREFERRED_IMAGE_TYPES],'FIRST-PAGE-SIZE'=>(string)$this->settings['page_size']];
+        if($types){$fields['PARAMETER-TYPES']=implode(' ',$types);}
+        $result=$this->exchange('EXECUTE-STATEMENT',$fields,[],null,$body);
         $command = strtoupper(trim($sql));
         if ($command === 'START') { $this->transaction = true; }
         elseif (in_array($command, ['COMMIT', 'ROLLBACK'], true)) { $this->transaction = false; }
@@ -189,7 +196,7 @@ class DB4DDriver
     }
     public function closeStatement(int $id): void { $this->exchange('CLOSE-STATEMENT', ['STATEMENT-ID' => (string)$id]); }
 
-    private function exchange(string $command, #[\SensitiveParameter] array $fields, array $metadata = [], ?int $expectedRows = null): array
+    private function exchange(string $command, #[\SensitiveParameter] array $fields, array $metadata = [], ?int $expectedRows = null, #[\SensitiveParameter] string $body = ''): array
     {
         $this->ensureOpen();
         $this->lastError = ['00000', null, null];
@@ -200,6 +207,7 @@ class DB4DDriver
         try {
             $this->connection->startOperation();
             $this->connection->write($request);
+            if($body!==''){$this->connection->write($body);}
             $header = $this->readHeader($id);
             if (($header['command-count'] ?? '1') !== '1') { throw new DB4DException('Multiple SQL results are unsupported.', 'IM001'); }
             $type = $header['result-type'] ?? ($command === 'FETCH-RESULT' ? 'Result-Set' : '');
@@ -228,7 +236,7 @@ class DB4DDriver
         } catch (DB4DException $error) {
             $this->recordError($error);
             // A complete SQL ERROR frame leaves the channel usable. A partial or unknown body does not.
-            if (!in_array($error->getCode(), ['42000', '28000'], true)) { $this->close(); }
+            if (!$error->synchronized) { $this->close(); }
             throw $error;
         }
     }
@@ -254,7 +262,8 @@ class DB4DDriver
         if ($match[2] === 'ERROR') {
             $native = isset($header['error-code']) && preg_match('/^-?[0-9]+$/D', $header['error-code']) ? (int)$header['error-code'] : 0;
             // Never put SQL, parameters or server-echoed values into exceptions or logs.
-            throw new DB4DException('4D rejected the request (server code ' . $native . ').', $id === 1 ? '28000' : '42000', $native);
+            $error=new DB4DException('4D rejected the request (server code ' . $native . ').', $id === 1 ? '28000' : SqlState::fromNative($native), $native);
+            $error->synchronized=true;throw $error;
         }
         return $header;
     }
@@ -298,6 +307,7 @@ class DB4DDriver
             if ($metadata['updateable']) {
                 $status = $read(1);
                 if ($status === '1') { $read(4); }
+                elseif ($status === '2') { $this->cellError($read); }
                 elseif ($status !== '0') { throw new DB4DException('Invalid row identifier status.', '08S01'); }
             }
             $row = [];
@@ -305,6 +315,7 @@ class DB4DDriver
                 $status = $read(1);
                 $row[] = match ($status) {
                     '0' => null,
+                    '2' => $this->cellError($read),
                     '1' => Codec::value($type, $read, $this->settings['max_field_bytes'], $this->settings['timestamp_format']),
                     default => throw new DB4DException('4D returned an invalid or error cell.', '08S01'),
                 };
@@ -312,6 +323,20 @@ class DB4DDriver
             $rows[] = $row;
         }
         return $rows;
+    }
+
+    private function cellError(callable $read): never
+    {
+        $native=Codec::signed64($read(8));
+        throw new DB4DException('4D rejected a result cell (server code '.$native.').',SqlState::fromNative($native),$native);
+    }
+
+    /** Optional bounded protocol logout. Destructors still only close the socket. */
+    public function disconnect(): void
+    {
+        if($this->inTransaction()){throw new DB4DException('Finish the transaction before graceful disconnect.','25000');}
+        if(!$this->isOpen()){return;}
+        try{$this->exchange('LOGOUT',[]);$this->exchange('QUIT',[]);}finally{$this->close();}
     }
 
     /** Close without throwing or issuing speculative SQL from a destructor. */
