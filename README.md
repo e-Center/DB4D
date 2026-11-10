@@ -46,7 +46,7 @@ composer test
 php tests/run.php
 ```
 
-Le serveur de test écoute exclusivement sur `127.0.0.1` et utilise des données synthétiques. Il ne peut pas sélectionner une base métier. Les tests couvrent les octets échangés, les paramètres, types, curseurs, transactions, délais, réponses malformées et écritures partielles. Les Actions GitHub exécutent la même suite sur PHP 8.2–8.5, sans secret ni accès de déploiement.
+Le serveur de test écoute exclusivement sur `127.0.0.1` et utilise des données synthétiques. Il ne peut pas sélectionner une base métier. Les tests couvrent les octets échangés, les paramètres, types, curseurs, transactions, délais, réponses malformées et écritures partielles. GitHub Actions est désactivé depuis le 10 novembre 2026. L’ancienne matrice PHP 8.2–8.5 est archivée dans `.github/workflows-disabled/` ; lancer `php tests/run.php` localement, sans secret ni accès de déploiement.
 
 ## Origine et licence
 

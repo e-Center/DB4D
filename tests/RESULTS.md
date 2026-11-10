@@ -12,7 +12,7 @@ Le serveur simulé est indépendant des classes du client : aucune réutilisatio
 
 Couverture exécutée : paramètres littéraux et nommés, apostrophes/dollars/sentinelle historique, CR/LF et Unicode hors BMP ; NULL, booléens, 16/32/64 bits signés, REAL, UTF-16LE, BLOB vide et binaire, timestamps ; résultats vides ; lecture partielle puis fetchAll et modes alternés ; booléens faux en itération ; deux statements préparés et exécutés dans l’ordre inverse ; pagination sans nouvelle exécution SQL ; fermeture anticipée/idempotente ; corps binaire des UPDATE y compris zéro ; erreurs SQL puis reprise du canal ; commit refusé, rollback et état de transaction ; délais, EOF au milieu d’un champ, identifiant erroné, métadonnées malformées, limites d’allocation, erreur cellule, grande requête et écritures réseau partielles forcées.
 
-**0 connexion à un vrai moteur 4D, 0 écriture métier.** PHP 8.2/8.3/8.4 et l’exécution native sur un serveur x86_64 restent à vérifier ; une matrice CI est fournie, sans prétendre qu’elle a déjà été exécutée. Les erreurs de contraintes, les transactions effectives, les déclencheurs, l’Unicode et les droits sur 4D v18 exigent toujours une qualification sur moteur réel.
+**0 connexion à un vrai moteur 4D, 0 écriture métier.** PHP 8.2/8.3/8.4 et l’exécution native sur un serveur x86_64 restent à vérifier ; une ancienne matrice CI est archivée, sans prétendre qu’elle a été exécutée ; GitHub Actions est désactivé depuis le 10 novembre 2026. Les erreurs de contraintes, les transactions effectives, les déclencheurs, l’Unicode et les droits sur 4D v18 exigent toujours une qualification sur moteur réel.
 
 ## Complément du 9 novembre 2026
 
